@@ -1,42 +1,23 @@
-#![allow(dead_code)]
-#[derive(Debug)]
-enum TokenType {
+#[derive(Debug, PartialEq)]
+pub enum Token {
     LeftBrace,
     RightBrace,
     LeftBracket,
     RightBracket,
     Colon,
     Comma,
-    String,
-    Number,
-    Boolean,
-    Null,
-}
-
-#[derive(Debug, PartialEq)]
-enum Number {
-    Float(f64),
-    Int(i32),
-}
-
-#[derive(Debug)]
-enum TokenValue {
-    Number(Number),
     String(String),
+    Number(Number),
     Boolean(bool),
-}
-
-#[derive(Debug)]
-pub struct Token {
-    token_type: TokenType,
-    value: Option<TokenValue>,
+    Null,
 }
 
 #[derive(Debug)]
 pub struct Tokenizer<'a> {
-    input_string: &'a str,
+    pub input_string: &'a str,
 }
 
+use crate::types::Number;
 use std::{iter::Peekable, str::Chars};
 
 impl<'a> Tokenizer<'a> {
@@ -47,73 +28,46 @@ impl<'a> Tokenizer<'a> {
         while let Some(c) = chars.peek() {
             match c {
                 '{' => {
-                    tokens.push(Token {
-                        token_type: TokenType::LeftBrace,
-                        value: None,
-                    });
+                    tokens.push(Token::LeftBrace);
                     chars.next();
                 }
                 '}' => {
-                    tokens.push(Token {
-                        token_type: TokenType::RightBrace,
-                        value: None,
-                    });
+                    tokens.push(Token::RightBrace);
                     chars.next();
                 }
                 '[' => {
-                    tokens.push(Token {
-                        token_type: TokenType::LeftBracket,
-                        value: None,
-                    });
+                    tokens.push(Token::LeftBracket);
                     chars.next();
                 }
                 ']' => {
-                    tokens.push(Token {
-                        token_type: TokenType::RightBracket,
-                        value: None,
-                    });
+                    tokens.push(Token::RightBracket);
                     chars.next();
                 }
                 ':' => {
-                    tokens.push(Token {
-                        token_type: TokenType::Colon,
-                        value: None,
-                    });
+                    tokens.push(Token::Colon);
                     chars.next();
                 }
                 ',' => {
-                    tokens.push(Token {
-                        token_type: TokenType::Comma,
-                        value: None,
-                    });
+                    tokens.push(Token::Comma);
                     chars.next();
                 }
                 'n' => {
                     if self.try_tokenize_null(&mut chars) {
-                        tokens.push(Token {
-                            token_type: TokenType::Null,
-                            value: None,
-                        });
+                        tokens.push(Token::Null);
                     } else {
                         return Err("Invalid JSON".into());
                     }
                 }
                 't' => {
                     if self.try_tokenize_true(&mut chars) {
-                        tokens.push(Token {
-                            token_type: TokenType::Boolean,
-                            value: Some(TokenValue::Boolean(true)),
-                        });
+                        tokens.push(Token::Boolean(true));
                     } else {
                         return Err("Invalid JSON".into());
                     }
                 }
                 'f' => {
                     if self.try_tokenize_false(&mut chars) {
-                        tokens.push(Token {
-                            token_type: TokenType::Boolean,
-                            value: Some(TokenValue::Boolean(false)),
-                        });
+                        tokens.push(Token::Boolean(false));
                     } else {
                         return Err("Invalid JSON".into());
                     }
@@ -121,10 +75,7 @@ impl<'a> Tokenizer<'a> {
                 '"' => {
                     match self.try_tokenize_string(&mut chars) {
                         Ok(result) => {
-                            tokens.push(Token {
-                                token_type: TokenType::String,
-                                value: Some(TokenValue::String(result)),
-                            });
+                            tokens.push(Token::String(result));
                         }
                         Err(err) => return Err(err),
                     };
@@ -132,15 +83,15 @@ impl<'a> Tokenizer<'a> {
                 '0'..='9' | '-' => {
                     match self.try_tokenize_number(&mut chars) {
                         Ok(result) => {
-                            tokens.push(Token {
-                                token_type: TokenType::Number,
-                                value: Some(TokenValue::Number(result)),
-                            });
+                            tokens.push(Token::Number(result));
                         }
                         Err(err) => return Err(err),
                     };
                 }
-                ' ' | '\n' | '\r' => continue,
+                ' ' | '\n' | '\r' => {
+                    chars.next();
+                    continue;
+                }
                 _ => return Err("Invalid JSON".into()),
             };
         }
@@ -244,6 +195,29 @@ mod tests {
     use core::panic;
 
     use super::*;
+
+    #[test]
+    fn test_tokenize_json_simplest() {
+        let input = r#"{"foo": "bar"}"#;
+        let tokenizer = Tokenizer {
+            input_string: input,
+        };
+
+        match tokenizer.tokenize_json() {
+            Ok(result) => {
+                let expected = vec![
+                    Token::LeftBrace,
+                    Token::String(String::from("foo")),
+                    Token::Colon,
+                    Token::String(String::from("bar")),
+                    Token::RightBrace,
+                ];
+
+                assert_eq!(result, expected);
+            }
+            Err(e) => panic!("should not throw this error: {:?}", e),
+        }
+    }
 
     #[test]
     fn test_try_tokenize_null() {
