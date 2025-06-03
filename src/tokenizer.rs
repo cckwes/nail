@@ -123,9 +123,43 @@ impl<'a> Tokenizer<'a> {
 
         let mut extracted_string = String::new();
 
-        for next_char in chars.by_ref() {
+        while let Some(next_char) = chars.next() {
             match next_char {
                 '"' => return Ok(extracted_string),
+                '\\' => {
+                    // Handle escape sequences
+                    match chars.next() {
+                        Some('"') => extracted_string.push('"'),
+                        Some('\\') => extracted_string.push('\\'),
+                        Some('/') => extracted_string.push('/'),
+                        Some('b') => extracted_string.push('\u{0008}'), // backspace
+                        Some('f') => extracted_string.push('\u{000C}'), // form feed
+                        Some('n') => extracted_string.push('\n'),
+                        Some('r') => extracted_string.push('\r'),
+                        Some('t') => extracted_string.push('\t'),
+                        Some('u') => {
+                            // Unicode escape sequence \uXXXX
+                            let mut unicode_digits = String::new();
+                            for _ in 0..4 {
+                                match chars.next() {
+                                    Some(c) if c.is_ascii_hexdigit() => unicode_digits.push(c),
+                                    _ => return Err("Invalid unicode escape sequence".into()),
+                                }
+                            }
+                            match u32::from_str_radix(&unicode_digits, 16) {
+                                Ok(code_point) => {
+                                    match char::from_u32(code_point) {
+                                        Some(unicode_char) => extracted_string.push(unicode_char),
+                                        None => return Err("Invalid unicode code point".into()),
+                                    }
+                                }
+                                Err(_) => return Err("Invalid unicode escape sequence".into()),
+                            }
+                        }
+                        Some(_) => return Err("Invalid escape sequence".into()),
+                        None => return Err("EOF reached when parsing escape sequence".into()),
+                    }
+                }
                 _ => extracted_string.push(next_char),
             }
         }
@@ -144,9 +178,13 @@ impl<'a> Tokenizer<'a> {
             chars.next();
         }
 
-        for next_char in chars.by_ref() {
-            match next_char {
-                '.' => {
+        loop {
+            match chars.peek() {
+                Some('0'..='9') => {
+                    extracted_string.push(chars.next().unwrap());
+                    has_number = true;
+                }
+                Some('.') => {
                     // number cannot have more than 1 .
                     if has_dot {
                         return Err(ERROR_MSG.into());
@@ -155,18 +193,15 @@ impl<'a> Tokenizer<'a> {
                     if !has_number {
                         return Err(ERROR_MSG.into());
                     }
-                    extracted_string.push(next_char);
+                    extracted_string.push(chars.next().unwrap());
                     has_dot = true;
                 }
-                '0'..='9' => {
-                    extracted_string.push(next_char);
-                    has_number = true;
-                }
-                ',' | '\n' | '\r' | ' ' => {
+                Some(',' | '\n' | '\r' | ' ' | '}' | ']') => {
                     return self.parse_number(&extracted_string, has_dot);
                 }
-                '-' => return Err(ERROR_MSG.into()),
-                _ => return Err(ERROR_MSG.into()),
+                Some('-') => return Err(ERROR_MSG.into()),
+                Some(_) => return Err(ERROR_MSG.into()),
+                None => break,
             }
         }
 
@@ -424,5 +459,165 @@ mod tests {
             Ok(_) => panic!("Expect to throw error"),
             Err(err) => assert_eq!(err, "Invalid number"),
         };
+    }
+
+    #[test]
+    fn test_try_tokenize_string_with_escaped_quotes() {
+        let input = r#""He said \"Hello World!\"""#;
+        let tokenizer = Tokenizer {
+            input_string: input,
+        };
+        let mut chars = input.chars().peekable();
+
+        match tokenizer.try_tokenize_string(&mut chars) {
+            Ok(result) => {
+                assert_eq!(result, r#"He said "Hello World!""#);
+            }
+            Err(_) => panic!("Expect success tokenize string with escaped quotes"),
+        }
+    }
+
+    #[test]
+    fn test_try_tokenize_string_with_escaped_backslash() {
+        let input = r#""Path: C:\\Users\\test""#;
+        let tokenizer = Tokenizer {
+            input_string: input,
+        };
+        let mut chars = input.chars().peekable();
+
+        match tokenizer.try_tokenize_string(&mut chars) {
+            Ok(result) => {
+                assert_eq!(result, r"Path: C:\Users\test");
+            }
+            Err(_) => panic!("Expect success tokenize string with escaped backslash"),
+        }
+    }
+
+    #[test]
+    fn test_try_tokenize_string_with_newline_escape() {
+        let input = r#""Line 1\nLine 2""#;
+        let tokenizer = Tokenizer {
+            input_string: input,
+        };
+        let mut chars = input.chars().peekable();
+
+        match tokenizer.try_tokenize_string(&mut chars) {
+            Ok(result) => {
+                assert_eq!(result, "Line 1\nLine 2");
+            }
+            Err(_) => panic!("Expect success tokenize string with newline escape"),
+        }
+    }
+
+    #[test]
+    fn test_try_tokenize_string_with_unicode_escape() {
+        let input = r#""Unicode: \u0048\u0065\u006C\u006C\u006F""#;
+        let tokenizer = Tokenizer {
+            input_string: input,
+        };
+        let mut chars = input.chars().peekable();
+
+        match tokenizer.try_tokenize_string(&mut chars) {
+            Ok(result) => {
+                assert_eq!(result, "Unicode: Hello");
+            }
+            Err(_) => panic!("Expect success tokenize string with unicode escape"),
+        }
+    }
+
+    #[test]
+    fn test_try_tokenize_string_with_invalid_escape() {
+        let input = r#""Invalid \x escape""#;
+        let tokenizer = Tokenizer {
+            input_string: input,
+        };
+        let mut chars = input.chars().peekable();
+
+        match tokenizer.try_tokenize_string(&mut chars) {
+            Ok(_) => panic!("Expect error for invalid escape sequence"),
+            Err(err) => assert_eq!(err, "Invalid escape sequence"),
+        }
+    }
+
+    #[test]
+    fn test_try_tokenize_string_with_incomplete_unicode() {
+        let input = r#""Unicode: \u00""#;
+        let tokenizer = Tokenizer {
+            input_string: input,
+        };
+        let mut chars = input.chars().peekable();
+
+        match tokenizer.try_tokenize_string(&mut chars) {
+            Ok(_) => panic!("Expect error for incomplete unicode escape"),
+            Err(err) => assert_eq!(err, "Invalid unicode escape sequence"),
+        }
+    }
+
+    #[test]
+    fn test_tokenize_json_with_number_at_end_of_object() {
+        let input = r#"{"num":42}"#;
+        let tokenizer = Tokenizer {
+            input_string: input,
+        };
+
+        match tokenizer.tokenize_json() {
+            Ok(result) => {
+                let expected = vec![
+                    Token::LeftBrace,
+                    Token::String(String::from("num")),
+                    Token::Colon,
+                    Token::Number(Number::Int(42)),
+                    Token::RightBrace,
+                ];
+                assert_eq!(result, expected);
+            }
+            Err(e) => panic!("should not throw this error: {:?}", e),
+        }
+    }
+
+    #[test]
+    fn test_tokenize_json_with_number_at_end_of_array() {
+        let input = r#"[1,2,3]"#;
+        let tokenizer = Tokenizer {
+            input_string: input,
+        };
+
+        match tokenizer.tokenize_json() {
+            Ok(result) => {
+                let expected = vec![
+                    Token::LeftBracket,
+                    Token::Number(Number::Int(1)),
+                    Token::Comma,
+                    Token::Number(Number::Int(2)),
+                    Token::Comma,
+                    Token::Number(Number::Int(3)),
+                    Token::RightBracket,
+                ];
+                assert_eq!(result, expected);
+            }
+            Err(e) => panic!("should not throw this error: {:?}", e),
+        }
+    }
+
+    #[test]
+    fn test_tokenize_json_with_float_at_end_of_object() {
+        let input = r#"{"pi":3.14159}"#;
+        let tokenizer = Tokenizer {
+            input_string: input,
+        };
+
+        match tokenizer.tokenize_json() {
+            Ok(result) => {
+                let expected = vec![
+                    Token::LeftBrace,
+                    Token::String(String::from("pi")),
+                    Token::Colon,
+                    Token::Number(Number::Float(3.14159)),
+                    Token::RightBrace,
+                ];
+                assert_eq!(result, expected);
+            }
+            Err(e) => panic!("should not throw this error: {:?}", e),
+        }
     }
 }
